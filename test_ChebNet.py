@@ -7,11 +7,15 @@ from scipy.linalg import eigh
 from scipy.spatial.distance import cdist
 from sklearn.model_selection import cross_val_score, train_test_split,ShuffleSplit
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import *
 import os
 import lmdb
 import math
 import time
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 from torch_scatter import scatter_add
 from torch_geometric.utils import add_self_loops
 from utils import *
@@ -122,7 +126,7 @@ def sim_adj(corr_matrix_z, sub_name, lmdb_dir):
     
 ## build adjacency matrix of KNN from lmdb dataset
 ## restore in gcn_data
-def build_adjacency(lmdb_dir, name_dir):
+def build_adjacency(lmdb_dir, name_dir,subname):
     sub_name = []  ## all subjects
     subTrials = []  ## samples
     adj_lst = []  ## adjacency matrix
@@ -152,7 +156,7 @@ def build_adjacency(lmdb_dir, name_dir):
                 lst.append(key)
     #             print(lst)
                 for i in lst:
-                    if '_PCC_' in i:
+                    if subname+'_PCC_' in i:
                         corr_matrix_z = lmdb_display(lmdb_dir,i)
                         corr_matrix_z = sim_adj(corr_matrix_z, i, lmdb_dir) ## consider the difference of trials and sub
                         subTrials.append(i)
@@ -164,9 +168,9 @@ def build_adjacency(lmdb_dir, name_dir):
                         dist = np.array([corr_matrix_z[i, idx[i]] for i in range(corr_matrix_z.shape[0])])
                         dist[dist < 0.1] = 0
                         adj_mat_sp = kNN(dist, idx)   ## scipy.sparse.csr.csr_matrix
-                        adj_narray = adj_mat_sp.toarray().tolist()
-                        adj_lst.append(adj_narray)
-                        sparse.save_npz(save_dir+i+'_adj_mat_sp.npz', adj_mat_sp)
+#                         adj_narray = adj_mat_sp.toarray().tolist()
+#                         adj_lst.append(adj_narray)
+#                         sparse.save_npz(save_dir+i+'_adj_mat_sp.npz', adj_mat_sp)
 #                         sp_adj = sparse.load_npz(save_dir+i+'_adj_mat_sp.npz')
 #                         print('================adj_mat_sp***',i,'=================')
 #                         print(np.array(adj_lst).shape)
@@ -174,6 +178,10 @@ def build_adjacency(lmdb_dir, name_dir):
                         
                         t0 = time.time()
                         adj_mat = sparse_mx_to_torch_sparse_tensor(adj_mat_sp)
+#                         print('adj_mat ',adj_mat)
+                        adj_lst.append(adj_mat)
+#                         print('==========================================================')
+#                         print('adj_lst ',adj_lst)
                         edge_index = adj_mat._indices()
                         edge_weight = adj_mat._values()
                         row, col = edge_index
@@ -190,7 +198,7 @@ def build_adjacency(lmdb_dir, name_dir):
                         laplacian_matrix = sparse.coo_matrix((lap.numpy(),edge_index),shape=(num_nodes,num_nodes))
                         laplacian_narray = laplacian_matrix.toarray().tolist()
                         lap_lst.append(laplacian_narray)
-                        sparse.save_npz(save_dir+i+'_laplacian_matrix.npz', laplacian_matrix)
+#                         sparse.save_npz(save_dir+i+'_laplacian_matrix.npz', laplacian_matrix)
 #                         print('================laplacian_matrix ***',i,'=================')
 #                         print(np.array(lap_lst).shape)
 #                         print(laplacian_matrix)
@@ -227,16 +235,83 @@ def subLabels(subTrials):
     
     return labels_lst
 
+## get ERP matrix(700*64) of someone
+## input:mat_dir,subname   out:store matrix in lmdb
+def ERP_matrix(ERP_dir,lmdb_dir,subname):
+    ERP_Matrix = []
+    ERP_lmdb_dir = lmdb_dir+'/ERP_Matrix'
+    mkdir(ERP_lmdb_dir)
+    ## read all name
+#     H40_ERP_dir = ERP_dir+'/H40/'
+#     P40_ERP_dir = ERP_dir+'/P40/'
+#     H40_files = os.listdir(H40_ERP_dir)
+#     P40_files = os.listdir(P40_ERP_dir)
+#     for file in H40_files: 
+#         print("++++++++++++++++++++++ The process of "+file+" ++++++++++++++++++++++")
+#         data=scio.loadmat(H40_ERP_dir+file)
+#         ll = list((data.keys()))
+#         for i in ll:
+#             if 'Category' in i:               
+#                 ERP_name = file.replace('.mat','')+'_ERP_Matrix_'+i
+#                 ## store ERP_matrix
+#                 lmdb_env = lmdb.open(ERP_lmdb_dir,map_size = int(1e12)*2)
+#                 with lmdb_env.begin(write=True) as lmdb_txn:
+#                     lmdb_txn.put(ERP_name.encode(),np.ascontiguousarray(data[i]))
+#                     ## del ERP_Matrix of nan
+#                     for j in range(len(data[i])):
+#                         if 'nan' in str(data[i][j]):
+#                             print('the position of nan lie in ', i, '\n', channel_Matrix)
+#                             lmdb_del_txn.delete(ERP_name.encode())
+                                        
+#     for file in H40_files: 
+#         print("++++++++++++++++++++++ The process of "+file+" ++++++++++++++++++++++")
+#         data=scio.loadmat(H40_ERP_dir+file)
+#         ll = list((data.keys()))
+#         for i in ll:
+#             if 'Category' in i:               
+#                 ERP_name = file.replace('.mat','')+'_ERP_Matrix_'+i
+#                 ## store ERP_matrix
+#                 lmdb_env = lmdb.open(ERP_lmdb_dir,map_size = int(1e12)*2)
+#                 with lmdb_env.begin(write=True) as lmdb_txn:
+#                     lmdb_txn.put(ERP_name.encode(),np.ascontiguousarray(data[i])) 
+#                     ## del ERP_Matrix of nan
+#                     for j in range(len(data[i])):
+#                         if 'nan' in str(data[i][j]):
+#                             print('the position of nan lie in ', i, '\n', channel_Matrix)
+#                             lmdb_del_txn.delete(ERP_name.encode())
+    
+    ## get ERP_matrix of subname
+    subTrial = []
+    lmdb_env = lmdb.open(ERP_lmdb_dir,readonly=True)
+    with lmdb_env.begin() as lmdb_mod_txn:
+        mod_cursor = lmdb_mod_txn.cursor()
+        for idx,(key, value) in enumerate(mod_cursor):
+            key = str(key, encoding='utf-8')
+            lst = list()
+            lst.append(key)
+            for i in lst:
+                if 'H1_ERP_Matrix_' in i or 'P1_ERP_Matrix_' in i:
+                    value=lmdb_mod_txn.get(i.encode())
+#                     print(i)
+                    Matrix = np.frombuffer(value,dtype=np.float64).reshape(65,700).transpose((1,0))[:,:64]
+                    ERP_Matrix.append(Matrix)
+                    subTrial.append(i)
+    print('ERP_Matrix shape {}'.format(np.array(ERP_Matrix).shape))
+    return np.array(ERP_Matrix),subTrial
+
 ## main
 lmdb_dir = '/media/lhj/Momery/PD_GCN/Script/GCN_Pop_ERP/test_result/train'
+ERP_dir = '/media/lhj/Momery/PD_GCN/Script/GCN_Pop_ERP'
+ERP_lmdb_dir = '/media/lhj/Momery/PD_GCN/Script/test_ChebNet'
 gcDa_dir = '/media/lhj/Momery/PD_GCN/Script/GCN_Pop_ERP/test_result/gcnData'
 sub_dir = '/media/lhj/Momery/PD_GCN/Script/GCN_Pop_ERP/subject.txt'
+subname = 'H10'
 
 
-sub_name,subTrials,adj_mat,lap_lst,W,V = build_adjacency(lmdb_dir, sub_dir)
+sub_name,subTrials,adj_mat,lap_lst,W,V = build_adjacency(lmdb_dir, sub_dir,subname)
 labels_lst = subLabels(subTrials)
-# key = 'P9_PCC_Category_1_Segment99_eigenvectors'
-# lmdb_display(gcDa_dir,key)
+ERP_Matrix,subTrials1 = ERP_matrix(ERP_dir, ERP_lmdb_dir, subname)
+subTrial = subLabels(subTrials1)
 
 ###split the entire dataset into train and test tests
 ###############################
@@ -251,29 +326,40 @@ target_name = (list(task_contrasts.values()))
 Nlabels = len(target_name)
 print('Nlabels {}'.format(Nlabels))
 
-Region_Num = adj_mat[0].shape[-1]
+Region_Num = np.array(ERP_Matrix)[0].shape[-1]
 print(Region_Num)
-block_dura = 17    
+block_dura = 700    
 test_size = 0.2
 randomseed=1234
 
-test_sub_num = len(adj_mat)
+test_sub_num = len(ERP_Matrix)
 print('test_sub_num ',test_sub_num)
 rs = np.random.RandomState(randomseed)
 train_sid, test_sid = train_test_split(range(test_sub_num), test_size=test_size, random_state=rs, shuffle=True)
 print('training on %d subjects, validating on %d subjects' % (len(train_sid), len(test_sid)))
 
 ####train set
-fmri_data_train = [adj_mat[i] for i in train_sid]
-label_data_train = pd.DataFrame(np.array([labels_lst[i] for i in train_sid]))
-fmri_train_dataset = HCP_taskfmri_matrix_datasets(fmri_data_train, label_data_train, target_name, block_dura=17, isTrain='train')
-train_loader = DataLoader(fmri_train_dataset, collate_fn=fmri_samples_collate_fn, **params)
+fmri_data_train = [ERP_Matrix[i] for i in train_sid]
+label_data_train = pd.DataFrame(np.array([subTrial[i] for i in train_sid]))
+print(type(label_data_train),'\n',label_data_train)
+# print('fmri_data_train ',type(fmri_data_train),'\n','label_data_train ',type(label_data_train))
+# train_data = TensorDataset(torch.Tensor(fmri_data_train,dtype=torch.long),torch.Tensor(label_data_train,dtype=torch.long))
+# train_sampler = RandomSampler(train_data)
+# train_loader = DataLoader(train_data,sampler=train_sampler,**params)
+# fmri_train_dataset = HCP_taskfmri_matrix_datasets(fmri_data_train, label_data_train, target_name, block_dura=17, isTrain='train')
+ERP_train_dataset = ERP_matrix_datasets(fmri_data_train, label_data_train, target_name, block_dura=700, isTrain='train')
+train_loader = DataLoader(ERP_train_dataset, collate_fn=ERP_samples_collate_fn, **params)
 
 ####test set
-fmri_data_test = [adj_mat[i] for i in test_sid]
-label_data_test = pd.DataFrame(np.array([labels_lst[i] for i in test_sid]))
-fmri_test_dataset = HCP_taskfmri_matrix_datasets(fmri_data_test, label_data_test, target_name, block_dura=17, isTrain='test')
-test_loader = DataLoader(fmri_test_dataset, collate_fn=fmri_samples_collate_fn, **params)
+fmri_data_test = [ERP_Matrix[i] for i in test_sid]
+label_data_test = pd.DataFrame(np.array([subTrial[i] for i in test_sid]))
+print(type(label_data_test),'\n',label_data_test)
+# test_data = TensorDataset(torch.Tensor(fmri_data_test,dtype=torch.long),torch.Tensor(label_data_test,dtype=torch.long))
+# test_sampler = RandomSampler(test_data)
+# test_loader = DataLoader(test_data,sampler=test_sampler,**params)
+# fmri_test_dataset = HCP_taskfmri_matrix_datasets(fmri_data_test, label_data_test, target_name, block_dura=17, isTrain='test')
+ERP_test_dataset = ERP_matrix_datasets(fmri_data_test, label_data_test, target_name, block_dura=700, isTrain='test')
+test_loader = DataLoader(ERP_test_dataset, collate_fn=ERP_samples_collate_fn, **params)
 
 
 
@@ -283,26 +369,32 @@ from model import count_parameters, model_fit_evaluate
 
 filters=32
 num_layers=2
-device = torch.device("cuda")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cpu")
+## 1stGCN
 model_test = ChebNet(block_dura, filters, Nlabels, gcn_layer=num_layers,dropout=0.25,gcn_flag=True)
 #model_test = ChebNet(block_dura, filters, Nlabels, K=5,gcn_layer=num_layers,dropout=0.25)
 model_test = model_test.to(device)
 # print('type of adj ',type(adj_mat))
-adj_mat = sparse_mx_to_torch_sparse_tensor(adj_mat)
-adj_mat = adj_mat.to(device)
-print(model_test)
-print("{} paramters to be trained in the model\n".format(count_parameters(model_test)))
-optimizer = optim.Adam(model_test.parameters(),lr=0.001, weight_decay=5e-4)
-model_fit_evaluate(model_test,adj_mat,device,train_loader,test_loader,optimizer,loss_func,num_epochs)
-model_test = ChebNet(block_dura, filters, Nlabels, K=5,gcn_layer=num_layers,dropout=0.25)
-model_test = model_test.to(device)
 # adj_mat = sparse_mx_to_torch_sparse_tensor(adj_mat)
 # adj_mat = torch.FloatTensor(adj_mat)
+# print(adj_mat,'\n',type(adj_mat),np.array(adj_mat).shape)
+# print('adj_mat of stack ',adj_mat,np.array(adj_mat).shape)
+adj_mat = torch.stack(adj_mat)
+# adj_mat = torch.stack([torch.Tensor(adj_mat[ii]) for ii in range(len(adj_mat))])
 adj_mat = adj_mat.to(device)
 loss_func = nn.CrossEntropyLoss()
 num_epochs=10
 print(model_test)
 print("{} paramters to be trained in the model\n".format(count_parameters(model_test)))
 optimizer = optim.Adam(model_test.parameters(),lr=0.001, weight_decay=5e-4)
+model_fit_evaluate(model_test,adj_mat[1],device,train_loader,test_loader,optimizer,loss_func,num_epochs)
 
-model_fit_evaluate(model_test,adj_mat,device,train_loader,test_loader,optimizer,loss_func,num_epochs)
+
+## ChebNet
+model_test = ChebNet(block_dura, filters, Nlabels, K=5,gcn_layer=num_layers,dropout=0.25)
+model_test = model_test.to(device)
+print(model_test)
+print("{} paramters to be trained in the model\n".format(count_parameters(model_test)))
+optimizer = optim.Adam(model_test.parameters(),lr=0.001, weight_decay=5e-4)
+model_fit_evaluate(model_test,adj_mat[1],device,train_loader,test_loader,optimizer,loss_func,num_epochs)

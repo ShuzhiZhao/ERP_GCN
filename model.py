@@ -7,7 +7,7 @@
 ###define model for training
 import time
 import matplotlib.pyplot as plt
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -99,6 +99,7 @@ class GraphConv(nn.Module):
         #fill_value = 0.05  ##-0.5
         #edge_index, lap = add_self_loops(edge_index, lap, fill_value, num_nodes)
 
+#         print('GC ',x.size(),'\n',self.weight.shape)
         x = torch.matmul(x, self.weight)
         out = spmm(edge_index, lap, num_nodes, x.permute(1, 2, 0).contiguous().view((num_nodes, -1))).view((num_nodes, -1, batch)).permute(2, 0,1)  # spmm(edge_index, lap, num_nodes, x)
 
@@ -230,7 +231,7 @@ class ChebNet(nn.Module):
             nn.Linear(nhid // 4, nclass),
         )
 
-    def forward(self, inputs, adj_mat):
+    def forward(self, inputs, adj_mat):        
         edge_index = adj_mat._indices()
         edge_weight = adj_mat._values()
         batch = inputs.size(0)
@@ -261,8 +262,8 @@ def train(model, adj_mat, device,train_loader,optimizer,loss_func, epoch):
     t0 = time.time()
     for batch_idx, (data,target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
-        
         optimizer.zero_grad()
+#         print('inputs ',data.size(),'\nadj_mat ',adj_mat.size())
         out = model(data,adj_mat)
         loss = loss_func(out,target)
         pred = F.log_softmax(out, dim=1).argmax(dim=1)

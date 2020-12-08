@@ -152,6 +152,46 @@ def load_fmri_data_from_lmdb(lmdb_filename,fmri_files=None,fmri_data_clean=None,
 
     return matrix_dict, fmri_sub_name
 
+##load ERP data from array
+class ERP_matrix_datasets(Dataset):
+    ##build a new class for own dataset
+    import numpy as np
+    def __init__(self, fmri_data_matrix, label_matrix, target_name,
+                 isTrain='train', block_dura=1, transform=False):
+        super(ERP_matrix_datasets, self).__init__()
+
+        if not isinstance(fmri_data_matrix, np.ndarray):
+            self.fmri_data_matrix = np.array(fmri_data_matrix)
+        else:
+            self.fmri_data_matrix = fmri_data_matrix
+        
+        self.Subject_Num = self.fmri_data_matrix.shape[0]
+        self.Region_Num = self.fmri_data_matrix[0].shape[-1]
+
+        if isinstance(label_matrix, pd.DataFrame):
+            self.label_matrix = label_matrix
+        elif isinstance(label_matrix, np.ndarray):
+            self.label_matrix = pd.DataFrame(data=np.array(label_matrix))
+        self.target_names = target_name
+
+        self.block_dura = block_dura
+        self.data_type = isTrain
+        self.transform = transform
+
+    def __len__(self):
+        return self.Subject_Num
+
+    def __getitem__(self, idx):
+        #step1: get one subject data
+        fmri_trial_data = self.fmri_data_matrix[idx]
+        fmri_trial_data = fmri_trial_data.reshape(1,64,64).transpose((0,2,1))
+        label_trial_data = np.array(self.label_matrix.iloc[idx])
+#         print('fmri_trial_data\n{}\n======\nlabel_trial_data\n{}\n'.format(fmri_trial_data.shape,label_trial_data.shape))
+        tensor_x = torch.stack([torch.FloatTensor(fmri_trial_data[ii]) for ii in range(len(fmri_trial_data))])  # transform to torch tensors
+        tensor_y = torch.stack([torch.LongTensor([label_trial_data[ii]]) for ii in range(len(label_trial_data))])
+#         print('tensor_x\n{}\n=======\ntensor_y\n{}\n'.format(tensor_x.size(),tensor_y.size()))
+        return tensor_x, tensor_y
+
 ##load fmri data from array
 class HCP_taskfmri_matrix_datasets(Dataset):
     ##build a new class for own dataset
@@ -185,10 +225,11 @@ class HCP_taskfmri_matrix_datasets(Dataset):
         #step1: get one subject data
         fmri_trial_data = self.fmri_data_matrix[idx]
         label_trial_data = self.label_matrix.iloc[idx]
-
+        print('fmri_trial_data {}\nlabel_trial_data {}'.format(fmri_trial_data.shape,label_trial_data.shape))
 
         ##step3: match fmri and event acoording to time
         fmri_data, label_data = self.match_fmri_event_data(fmri_trial_data, label_trial_data,self.block_dura)
+        print('fmri_data {}\nlabel_data{}'.format(fmri_data.shape, label_data.shape))
         #print(fmri_data.shape, label_data.shape)
         Nsamples = fmri_data.shape[0]
         if self.transform:
@@ -205,6 +246,7 @@ class HCP_taskfmri_matrix_datasets(Dataset):
     def match_fmri_event_data(self,fmri_trial_data, label_trial_data,block_dura=1):
         ###matching between fmri data and event data
         condition_mask = pd.Series(label_trial_data).isin(self.target_names)
+        print('condition_mask {}'.format(condition_mask))
         tc_matrix_select = np.array(fmri_trial_data[condition_mask, :])
         label_data_select = np.array(label_trial_data[condition_mask])
         ##print(tc_matrix_select.shape,label_data_select.shape)
@@ -395,6 +437,11 @@ class HCP_taskfmri_files(Dataset):
 
         return fmri_data_matrix, le.transform(label_data_matrix)
 
+def ERP_samples_collate_fn(data):
+    images, targets = zip(*data)
+    images = torch.FloatTensor(torch.cat(images)) #.permute(0, 2, 1)
+    targets = torch.LongTensor(torch.cat(targets).squeeze())
+    return images, targets
     
 def fmri_samples_collate_fn(data):
     """Creates mini-batch tensors from the list of tuples (image, caption).
