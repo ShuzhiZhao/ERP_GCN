@@ -289,7 +289,7 @@ def test(model, adj_mat, device, test_loader,loss_func):
             data, target = data.to(device), target.to(device)
             ## saliency maps
             saliency = saliency_Maps(data,target)
-            saliRank = saliency_Rank(saliency)
+            saliRank = saliency_Rank(saliency) ## donate of channel
             out = model(data,adj_mat)
             
             loss = loss_func(out,target)
@@ -297,14 +297,63 @@ def test(model, adj_mat, device, test_loader,loss_func):
             pred = F.log_softmax(out, dim=1).argmax(dim=1)
             #pred = out.argmax(dim=1,keepdim=True) # get the index of the max log-probability
             total += target.size(0)
-            test_acc += pred.eq(target.view_as(pred)).sum().item()
-            
+            test_acc += pred.eq(target.view_as(pred)).sum().item()            
+            ## Network
+            network = adj_network(saliency)
     
     test_loss /= total
     test_acc /= total
     print('Test Loss {:4f} | Acc {:4f}'.format(test_loss,test_acc))
-    return test_loss,test_acc
+    return test_loss,test_acc, network
 
+def plot_Network(model_history):
+    import networkx as nx
+    import numpy as np
+    import matplotlib.pyplot as plt
+    G=nx.Graph()
+    cm = plt.cm.get_cmap('RdYlBu_r')
+    cm1 = plt.cm.get_cmap('Greys')
+    ## row, col and value type np.array 
+    rr,cc,vv = [],[],[]
+    for jj in range(10):
+        for ii in model_history['test_cow_']:
+            rr.append(ii[jj]+1) 
+        for ii in model_history['test_col_']:
+            cc.append(ii[jj]+1) 
+        for ii in model_history['test_value_']:
+            vv.append(ii[jj]+1) 
+    row = np.array(rr)
+    col = np.array(cc)
+    value = np.array(vv)
+#     print(row,col,value)
+    for j in range(len(row)):
+        G.add_weighted_edges_from([(row[j],col[j],value[j])])
+    print(G.edges())
+    pos = [(-2.92,1.08),(-2.92,1.08),(-1.98,1.04),(-1.,1.02),(0,1),(1,1.02),(1.98,1.04),(2.92,1.08),(-3.,0),(-2,0),(-1,0),(0,0),(1,0),(2,0),(3,0),(-2.92,-1.08),(-1.98,-1.04),(-1.,-1.02),(0,-1),(1,-1.02),(1.98,-1.04),(2.92,-1.08),(-1.3,3.8),(0,4),(1.3,3.8),(-2.4,3.15),(-1.5,3),(0,3),(1.5,3),(2.4,3.15),(-3.3,2.37),(-2.6,2.25),(-1.7,2.15),(-0.85,2.07),(0,2),(0.85,2.07),(1.7,2.15),(2.6,2.25),(3.3,2.37),(-3.85,1.13),(3.85,1.13),(-4,0),(4,0),(-5,0),(5,0),(-3.85,-1.13),(3.85,-1.13),(-3.3,-2.37),(-2.6,-2.25),(-1.7,-2.15),(-0.85,-2.07),(0,-2),(0.85,-2.07),(1.7,-2.15),(2.6,-2.25),(3.3,-2.37),(-2.4,-3.15),(-1.5,-3),(0,-3),(1.5,-3),(2.4,-3.15),(-1.3,-3.8),(0,-4),(1.3,-3.8),(0,-5)]
+    de = nx.draw_networkx_edges(G,pos,alpha=0.8,edge_color=[float(v['weight']*1) for (r,c,v) in G.edges(data=True)],edge_cmap=cm1,width=4)##edge color
+    dn = nx.draw_networkx_nodes(G,pos,node_color=[1*jj[1] for jj in G.degree()],cmap=cm)
+    nx.draw_networkx_labels(G,pos)
+    plt.colorbar(de)
+    plt.colorbar(dn)
+    # plt.savefig('a.png')
+    plt.show()
+
+def adj_network(saliency):
+    network = [[],[],[]]
+    rankNum = 10
+    for ii in range(rankNum):
+        max_ = torch.max(saliency,1)
+        row = max_.indices.numpy().tolist()[0]
+        col = max_.indices.numpy().tolist()[1]
+        value = max_.values.numpy().tolist()[0]+max_.values.numpy().tolist()[1]
+        network[0].append(row)
+        network[1].append(col)
+        network[2].append(value) 
+        max_ = torch.max(saliency,1)
+        for jj in range(max_.values.size()[0]):
+            saliency[jj][max_.indices.numpy().tolist()[jj]] = 0
+    return network
+    
 def saliency_Rank(saliency):
     saliRank = {} # channel and donate
     rankNum = 10
@@ -337,7 +386,7 @@ def saliency_Maps(data,target):
 #     # torch.FloatTensor([1. for i in range(len(target))])
 #     logits.backward(torch.FloatTensor([1. for i in range(len(target))])) # element 0 of tensors does not require grad and does not have a grad_fn    
     saliency = abs(data1.grad.data)
-#     print(saliency)
+#     print(saliency.size(),saliency)
     
     return saliency
 
@@ -385,18 +434,28 @@ def model_fit_evaluate(model,adj_mat,device,train_loader,test_loader,optimizer,l
     model_history['train_loss']=[];
     model_history['train_acc']=[];
     model_history['test_loss']=[];
-    model_history['test_acc']=[];  
+    model_history['test_acc']=[]; 
+    model_history['test_cow_']=[];
+    model_history['test_col_']=[];
+    model_history['test_value_']=[]; 
     for epoch in range(num_epochs):
         train_loss,train_acc =train(model,adj_mat, device, train_loader, optimizer,loss_func, epoch)
         model_history['train_loss'].append(train_loss)
         model_history['train_acc'].append(train_acc)
 
-        test_loss,test_acc = test(model,adj_mat, device, test_loader,loss_func)
+        test_loss,test_acc,network = test(model,adj_mat, device, test_loader,loss_func)
         model_history['test_loss'].append(test_loss)
-        model_history['test_acc'].append(test_acc)
+        model_history['test_acc'].append(test_acc)        
+        model_network(network,model_history)
         if test_acc > best_acc:
             best_acc = test_acc
             print("Model updated: Best-Acc = {:4f}".format(best_acc))
 
     print("best testing accuarcy:",best_acc)
     plot_history(model_history)
+    plot_Network(model_history)
+
+def model_network(network,model_history):
+    model_history['test_cow_'].append(network[0])
+    model_history['test_col_'].append(network[1])
+    model_history['test_value_'].append(network[2]) 
