@@ -249,7 +249,8 @@ def testChebNet(ERP_Matrix,adj_mat,subTrial):
 
     filters=32
     num_layers=2
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     ## 1stGCN
     model_test = ChebNet(block_dura, filters, Nlabels, gcn_layer=num_layers,dropout=0.25,gcn_flag=True)
     model_test = model_test.to(device)

@@ -287,6 +287,9 @@ def test(model, adj_mat, device, test_loader,loss_func):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
+            ## saliency maps
+            saliency = saliency_Maps(data,target)
+            saliRank = saliency_Rank(saliency)
             out = model(data,adj_mat)
             
             loss = loss_func(out,target)
@@ -295,11 +298,69 @@ def test(model, adj_mat, device, test_loader,loss_func):
             #pred = out.argmax(dim=1,keepdim=True) # get the index of the max log-probability
             total += target.size(0)
             test_acc += pred.eq(target.view_as(pred)).sum().item()
+            
     
     test_loss /= total
     test_acc /= total
     print('Test Loss {:4f} | Acc {:4f}'.format(test_loss,test_acc))
     return test_loss,test_acc
+
+def saliency_Rank(saliency):
+    saliRank = {} # channel and donate
+    rankNum = 10
+    for ii in range(rankNum):
+        max_ = torch.max(saliency,1)
+        for jj in range(max_.values.size()[0]):
+            saliRank[max_.indices.numpy().tolist()[jj]] = max_.values.numpy().tolist()[jj]
+            saliency[jj][max_.indices.numpy().tolist()[jj]] = 0     
+#     print(saliRank)
+    return saliRank
+
+def saliency_Maps(data,target): 
+    import torch.nn as nn
+    entroy = nn.CrossEntropyLoss()
+    ## get the average (20,360) of (20,360,17)
+    data1 = torch.randn(data.size()[0], 1)
+    for ii in range(data.size()[1]):
+        data1 = torch.cat([data1,torch.mean(data[:,ii,:],1,True)],dim=1)
+    data1 = data1[:,1:]
+    saliency = None
+    ## get gradient of data
+    data1.requires_grad_()
+#     data1 = torch.autograd.Variable(data1,requires_grad=True)
+    ## get true class
+    with torch.enable_grad():
+        loss = entroy(data1,target)
+    loss.backward()
+#     logits = model.forward(data)
+#     logits = logits.gather(1,target.view(-1,1)).squeeze()
+#     # torch.FloatTensor([1. for i in range(len(target))])
+#     logits.backward(torch.FloatTensor([1. for i in range(len(target))])) # element 0 of tensors does not require grad and does not have a grad_fn    
+    saliency = abs(data1.grad.data)
+#     print(saliency)
+    
+    return saliency
+
+def TPR_FPR(target,pred):
+    tpr,fpr = 0,0
+    TP1,FN1,FP1,TN1=0,0,0,0
+    cla1 = np.unique(pred)
+    cla2 = np.unique(target)
+    claSum = np.unique(np.hstack((cla1,cla2)))
+    cc = claSum[0]
+    for ii in range(len(target)):
+            if target[ii]==cc and pred[ii]==cc:
+                TP1+=1
+            elif target[ii]!=cc and pred[ii]==cc:
+                FP1+=1
+            elif target[ii]==cc and pred[ii]!=cc:
+                FN1+=1
+            elif target[ii]!=cc and pred[ii]!=cc:
+                TN1+=1
+    tpr = TP1/(TP1+FN1)
+    fpr = FP1/(TN1+FP1)
+    print(tpr,fpr)
+    return tpr,fpr
 
 def plot_history(model_history):
     plt.figure(figsize=(10,4))
